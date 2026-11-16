@@ -1,5 +1,7 @@
 export const REQUEST_COUNT = 10;
 const IDLE_TIMEOUT_MS = 30_000;
+// Кодировки, которые fetch в Node распаковывает сам.
+const FETCH_DECODES = new Set(["gzip", "x-gzip", "deflate", "br", "zstd"]);
 
 export interface RequestResult {
   durationMs: number;
@@ -49,8 +51,7 @@ async function measureRequest(url: string, idleTimeoutMs: number): Promise<Reque
       throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
     }
 
-    const encoding = response.headers.get("content-encoding");
-    const decoded = encoding !== null && encoding !== "identity";
+    const decoded = isDecodedByFetch(response.headers.get("content-encoding"));
 
     let bytes = 0;
     if (response.body) {
@@ -64,6 +65,18 @@ async function measureRequest(url: string, idleTimeoutMs: number): Promise<Reque
   } finally {
     clearTimeout(idleTimer);
   }
+}
+
+/**
+ * fetch распаковывает тело, только если знает все кодировки из списка; иначе отдаёт байты как есть.
+ * `identity` fetch тоже считает незнакомой: «identity, gzip» остаётся сжатым.
+ */
+function isDecodedByFetch(contentEncoding: string | null): boolean {
+  const codings = (contentEncoding ?? "")
+    .split(",")
+    .map((coding) => coding.trim().toLowerCase())
+    .filter((coding) => coding !== "");
+  return codings.length > 0 && codings.every((coding) => FETCH_DECODES.has(coding));
 }
 
 /** Делает `count` запросов строго по очереди. */

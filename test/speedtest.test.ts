@@ -1,4 +1,4 @@
-import { gzipSync } from "node:zlib";
+import { brotliCompressSync, gzipSync, zstdCompressSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { measure, summarize } from "../src/speedtest.ts";
 import { startServer, type TestServer } from "./helpers/server.ts";
@@ -21,6 +21,19 @@ describe("summarize", () => {
 
 describe("measure", () => {
   const BODY_SIZE = 100_000;
+  const BODY = Buffer.alloc(BODY_SIZE);
+  // Что сервер кладёт в тело для каждого значения Content-Encoding (сервер игнорирует identity из запроса).
+  const ENCODED_BODIES: Record<string, Buffer> = {
+    gzip: gzipSync(BODY),
+    GZIP: gzipSync(BODY),
+    br: brotliCompressSync(BODY),
+    zstd: zstdCompressSync(BODY),
+    identity: BODY,
+    Identity: BODY,
+    "x-custom": BODY,
+    "gzip, x-custom": gzipSync(BODY),
+    "identity, gzip": gzipSync(BODY),
+  };
   let server: TestServer;
   let active = 0;
   let maxActive = 0;
@@ -29,6 +42,11 @@ describe("measure", () => {
 
   beforeAll(async () => {
     server = await startServer((req, res) => {
+      if (req.url?.startsWith("/encoded/")) {
+        const encoding = decodeURIComponent(req.url.slice("/encoded/".length));
+        res.writeHead(200, { "Content-Encoding": encoding }).end(ENCODED_BODIES[encoding]);
+        return;
+      }
       switch (req.url) {
         case "/sequential":
           active++;
@@ -51,10 +69,6 @@ describe("measure", () => {
           return;
         case "/no-content":
           res.writeHead(204).end();
-          return;
-        case "/gzip-anyway":
-          // Сервер игнорирует Accept-Encoding: identity и всё равно сжимает.
-          res.writeHead(200, { "Content-Encoding": "gzip" }).end(gzipSync(Buffer.alloc(BODY_SIZE)));
           return;
         case "/fail-third":
           failThirdCount++;
@@ -139,11 +153,26 @@ describe("measure", () => {
     expect(noContent?.bytes).toBe(0);
   });
 
-  it("помечает ответ, который сервер сжал вопреки identity: fetch отдаёт байты после распаковки", async () => {
-    const [compressed] = await measure(`${server.url}/gzip-anyway`, 1);
-    const [plain] = await measure(`${server.url}/file`, 1);
-    expect(compressed).toMatchObject({ bytes: BODY_SIZE, decoded: true });
-    expect(plain).toMatchObject({ bytes: BODY_SIZE, decoded: false });
+  // fetch сам распаковывает gzip, x-gzip, deflate, br и zstd в любом регистре.
+  // Если в списке есть хоть одна незнакомая кодировка, fetch не распаковывает ничего.
+  it.each([
+    { encoding: "gzip", bytes: BODY_SIZE, decoded: true },
+    { encoding: "GZIP", bytes: BODY_SIZE, decoded: true },
+    { encoding: "br", bytes: BODY_SIZE, decoded: true },
+    { encoding: "zstd", bytes: BODY_SIZE, decoded: true },
+    { encoding: "identity", bytes: BODY_SIZE, decoded: false },
+    { encoding: "Identity", bytes: BODY_SIZE, decoded: false },
+    { encoding: "x-custom", bytes: BODY_SIZE, decoded: false },
+    { encoding: "gzip, x-custom", bytes: ENCODED_BODIES["gzip, x-custom"]!.length, decoded: false },
+    { encoding: "identity, gzip", bytes: ENCODED_BODIES["identity, gzip"]!.length, decoded: false },
+  ])("Content-Encoding: $encoding → decoded = $decoded", async ({ encoding, bytes, decoded }) => {
+    const [result] = await measure(`${server.url}/encoded/${encodeURIComponent(encoding)}`, 1);
+    expect(result).toMatchObject({ bytes, decoded });
+  });
+
+  it("без Content-Encoding считает тело как есть", async () => {
+    const [result] = await measure(`${server.url}/file`, 1);
+    expect(result).toMatchObject({ bytes: BODY_SIZE, decoded: false });
   });
 
   it("падает, если соединение оборвалось посреди тела", async () => {
