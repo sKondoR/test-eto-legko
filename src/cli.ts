@@ -33,9 +33,10 @@ async function main(): Promise<number> {
 
   console.log(`Скачиваю ${url.href} ${REQUEST_COUNT} раз подряд...`);
   try {
-    const results = await measure(url.href, REQUEST_COUNT, (result, number) =>
-      console.log(formatRequestLine(result, number, REQUEST_COUNT)),
-    );
+    const results = await measure(url.href, REQUEST_COUNT, {
+      onResult: (result, requestNumber) =>
+        console.log(formatRequestLine(result, requestNumber, REQUEST_COUNT)),
+    });
     if (results.some((result) => result.decoded)) {
       console.error(
         "Внимание: сервер сжал ответ, хотя скрипт просил без сжатия. " +

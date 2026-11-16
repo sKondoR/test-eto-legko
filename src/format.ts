@@ -17,8 +17,12 @@ function formatSpeed(bitsPerSecond: number): string {
   return `${mbits.toFixed(2)} Мбит/с (${mbytes.toFixed(2)} МБ/с)`;
 }
 
-export function formatRequestLine(result: RequestResult, number: number, count: number): string {
-  const padded = String(number).padStart(String(count).length);
+export function formatRequestLine(
+  result: RequestResult,
+  requestNumber: number,
+  count: number,
+): string {
+  const padded = String(requestNumber).padStart(String(count).length);
   return `Запрос ${padded}/${count}: ${formatMs(result.durationMs)}, ${formatMegabytes(result.bytes)}`;
 }
 

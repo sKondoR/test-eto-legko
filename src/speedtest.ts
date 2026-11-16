@@ -8,6 +8,13 @@ export interface RequestResult {
   decoded: boolean;
 }
 
+export interface MeasureOptions {
+  /** Вызывается после каждого запроса; номер запроса начинается с 1. */
+  onResult?: (result: RequestResult, requestNumber: number) => void;
+  /** Ограничивает каждый запрос целиком, вместе с чтением тела. */
+  timeoutMs?: number;
+}
+
 export interface Summary {
   requests: number;
   totalBytes: number;
@@ -39,21 +46,17 @@ async function measureRequest(url: string, timeoutMs: number): Promise<RequestRe
   return { durationMs: performance.now() - start, bytes, decoded };
 }
 
-/**
- * Делает `count` запросов строго по очереди. `onResult` получает номер запроса, начиная с 1.
- * `timeoutMs` ограничивает каждый запрос целиком, вместе с чтением тела.
- */
+/** Делает `count` запросов строго по очереди. */
 export async function measure(
   url: string,
   count: number,
-  onResult?: (result: RequestResult, number: number) => void,
-  timeoutMs = TIMEOUT_MS,
+  { onResult, timeoutMs = TIMEOUT_MS }: MeasureOptions = {},
 ): Promise<RequestResult[]> {
   const results: RequestResult[] = [];
-  for (let number = 1; number <= count; number++) {
+  for (let requestNumber = 1; requestNumber <= count; requestNumber++) {
     const result = await measureRequest(url, timeoutMs);
     results.push(result);
-    onResult?.(result, number);
+    onResult?.(result, requestNumber);
   }
   return results;
 }
