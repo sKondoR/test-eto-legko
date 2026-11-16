@@ -1,0 +1,27 @@
+{
+  "name": "test-eto-legko",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Консольный замер скорости скачивания: 10 последовательных запросов к одному адресу",
+  "type": "module",
+  "scripts": {
+    "start": "node src/cli.ts",
+    "test": "vitest run --project unit",
+    "test:live": "vitest run --project live",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "oxfmt": "^0.79.0",
+    "oxlint": "^1.94.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
