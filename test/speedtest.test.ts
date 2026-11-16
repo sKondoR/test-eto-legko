@@ -71,6 +71,23 @@ describe("measure", () => {
           res.writeHead(200);
           res.write(Buffer.alloc(1000));
           return;
+        case "/stall-headers":
+          // Принимает запрос и ничего не отвечает.
+          return;
+        case "/slow": {
+          // Отдаёт тело кусками каждые 50 мс, всего 600 мс: дольше таймаута простоя, но без пауз.
+          res.writeHead(200);
+          let chunks = 0;
+          const timer = setInterval(() => {
+            res.write(Buffer.alloc(1000));
+            if (++chunks === 12) {
+              clearInterval(timer);
+              res.end();
+            }
+          }, 50);
+          res.on("close", () => clearInterval(timer));
+          return;
+        }
         default:
           res.writeHead(404).end();
       }
@@ -133,7 +150,20 @@ describe("measure", () => {
     await expect(measure(`${server.url}/truncated`, 1)).rejects.toThrow();
   });
 
-  it("падает по таймауту, если сервер замолчал посреди тела", async () => {
-    await expect(measure(`${server.url}/stall`, 1, { timeoutMs: 200 })).rejects.toThrow(/timeout/i);
+  it("не обрывает долгую загрузку, пока данные идут", async () => {
+    const [result] = await measure(`${server.url}/slow`, 1, { idleTimeoutMs: 200 });
+    expect(result?.bytes).toBe(12_000);
+  });
+
+  it("падает по таймауту простоя, если сервер замолчал посреди тела", async () => {
+    await expect(measure(`${server.url}/stall`, 1, { idleTimeoutMs: 200 })).rejects.toThrow(
+      "Сервер не присылает данные дольше 0.2 с",
+    );
+  });
+
+  it("падает по таймауту простоя, если сервер не прислал даже заголовки", async () => {
+    await expect(measure(`${server.url}/stall-headers`, 1, { idleTimeoutMs: 200 })).rejects.toThrow(
+      "Сервер не присылает данные дольше 0.2 с",
+    );
   });
 });

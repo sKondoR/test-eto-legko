@@ -1,5 +1,5 @@
 export const REQUEST_COUNT = 10;
-const TIMEOUT_MS = 30_000;
+const IDLE_TIMEOUT_MS = 30_000;
 
 export interface RequestResult {
   durationMs: number;
@@ -11,8 +11,8 @@ export interface RequestResult {
 export interface MeasureOptions {
   /** Вызывается после каждого запроса; номер запроса начинается с 1. */
   onResult?: (result: RequestResult, requestNumber: number) => void;
-  /** Ограничивает каждый запрос целиком, вместе с чтением тела. */
-  timeoutMs?: number;
+  /** Сколько ждать следующую порцию данных: заголовки или очередной кусок тела. */
+  idleTimeoutMs?: number;
 }
 
 export interface Summary {
@@ -23,38 +23,58 @@ export interface Summary {
 }
 
 /** Делает один запрос и читает тело до конца. Время — от вызова fetch до последнего байта. */
-async function measureRequest(url: string, timeoutMs: number): Promise<RequestResult> {
+async function measureRequest(url: string, idleTimeoutMs: number): Promise<RequestResult> {
+  // Таймаут простоя, а не общий срок: долгая загрузка тяжёлого файла не обрывается, пока данные идут.
+  const controller = new AbortController();
+  let idleTimer: NodeJS.Timeout | undefined;
+  const restartIdleTimer = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(
+      () =>
+        controller.abort(new Error(`Сервер не присылает данные дольше ${idleTimeoutMs / 1000} с`)),
+      idleTimeoutMs,
+    );
+  };
+
   const start = performance.now();
-  const response = await fetch(url, {
-    // Просим без сжатия: fetch распаковывает тело сам, и тогда байты не совпадут с пришедшими по сети.
-    headers: { "Accept-Encoding": "identity" },
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
-  }
+  restartIdleTimer();
+  try {
+    const response = await fetch(url, {
+      // Просим без сжатия: fetch распаковывает тело сам, и тогда байты не совпадут с пришедшими по сети.
+      headers: { "Accept-Encoding": "identity" },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
+    }
 
-  const encoding = response.headers.get("content-encoding");
-  const decoded = encoding !== null && encoding !== "identity";
+    const encoding = response.headers.get("content-encoding");
+    const decoded = encoding !== null && encoding !== "identity";
 
-  let bytes = 0;
-  if (response.body) {
-    // Тело читаем потоком и не храним: важен только размер.
-    for await (const chunk of response.body) bytes += chunk.byteLength;
+    let bytes = 0;
+    if (response.body) {
+      // Тело читаем потоком и не храним: важен только размер.
+      for await (const chunk of response.body) {
+        restartIdleTimer();
+        bytes += chunk.byteLength;
+      }
+    }
+    return { durationMs: performance.now() - start, bytes, decoded };
+  } finally {
+    clearTimeout(idleTimer);
   }
-  return { durationMs: performance.now() - start, bytes, decoded };
 }
 
 /** Делает `count` запросов строго по очереди. */
 export async function measure(
   url: string,
   count: number,
-  { onResult, timeoutMs = TIMEOUT_MS }: MeasureOptions = {},
+  { onResult, idleTimeoutMs = IDLE_TIMEOUT_MS }: MeasureOptions = {},
 ): Promise<RequestResult[]> {
   const results: RequestResult[] = [];
   for (let requestNumber = 1; requestNumber <= count; requestNumber++) {
-    const result = await measureRequest(url, timeoutMs);
+    const result = await measureRequest(url, idleTimeoutMs);
     results.push(result);
     onResult?.(result, requestNumber);
   }
