@@ -5,14 +5,13 @@ import { startServer, type TestServer } from "./helpers/server.ts";
 describe("summarize", () => {
   it("считает сумму, среднее время и скорость по общему объёму и времени", () => {
     const summary = summarize([
-      { durationMs: 1000, bytes: 1_000_000 },
-      { durationMs: 3000, bytes: 3_000_000 },
+      { durationMs: 1000, bytes: 1_000_000, decoded: false },
+      { durationMs: 3000, bytes: 3_000_000, decoded: false },
     ]);
 
     expect(summary).toEqual({
       requests: 2,
       totalBytes: 4_000_000,
-      totalMs: 4000,
       averageMs: 2000,
       bitsPerSecond: 8_000_000,
     });
@@ -22,7 +21,6 @@ describe("summarize", () => {
 describe("measure", () => {
   const BODY_SIZE = 100_000;
   let server: TestServer;
-  let requestCount = 0;
   let active = 0;
   let maxActive = 0;
   const acceptEncodings: (string | undefined)[] = [];
@@ -33,7 +31,6 @@ describe("measure", () => {
         res.writeHead(404).end("not found");
         return;
       }
-      requestCount++;
       active++;
       maxActive = Math.max(maxActive, active);
       acceptEncodings.push(req.headers["accept-encoding"]);
@@ -53,9 +50,9 @@ describe("measure", () => {
     expect(results.every((r) => r.bytes === BODY_SIZE)).toBe(true);
     expect(results.every((r) => r.durationMs > 0)).toBe(true);
     expect(numbers).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    expect(requestCount).toBe(10);
     expect(maxActive).toBe(1);
-    expect(acceptEncodings.every((value) => value === "identity")).toBe(true);
+    // Ровно 10 обращений к серверу, и в каждом выключено сжатие.
+    expect(acceptEncodings).toEqual(Array(10).fill("identity"));
   });
 
   it("падает на статусе не 2xx", async () => {

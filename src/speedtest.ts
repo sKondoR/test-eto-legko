@@ -4,46 +4,54 @@ const TIMEOUT_MS = 30_000;
 export interface RequestResult {
   durationMs: number;
   bytes: number;
+  /** Сервер сжал ответ вопреки identity, и fetch распаковал тело: `bytes` посчитаны после распаковки. */
+  decoded: boolean;
 }
 
 export interface Summary {
   requests: number;
   totalBytes: number;
-  totalMs: number;
   averageMs: number;
   bitsPerSecond: number;
 }
 
 /** Делает один запрос и читает тело до конца. Время — от вызова fetch до последнего байта. */
-export async function measureRequest(url: string): Promise<RequestResult> {
+async function measureRequest(url: string, timeoutMs: number): Promise<RequestResult> {
   const start = performance.now();
   const response = await fetch(url, {
-    // Без сжатия считаем ровно те байты, что пришли по сети.
+    // Просим без сжатия: fetch распаковывает тело сам, и тогда байты не совпадут с пришедшими по сети.
     headers: { "Accept-Encoding": "identity" },
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) {
     await response.body?.cancel();
     throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
   }
 
+  const encoding = response.headers.get("content-encoding");
+  const decoded = encoding !== null && encoding !== "identity";
+
   let bytes = 0;
   if (response.body) {
     // Тело читаем потоком и не храним: важен только размер.
     for await (const chunk of response.body) bytes += chunk.byteLength;
   }
-  return { durationMs: performance.now() - start, bytes };
+  return { durationMs: performance.now() - start, bytes, decoded };
 }
 
-/** Делает `count` запросов строго по очереди. `onResult` получает номер запроса, начиная с 1. */
+/**
+ * Делает `count` запросов строго по очереди. `onResult` получает номер запроса, начиная с 1.
+ * `timeoutMs` ограничивает каждый запрос целиком, вместе с чтением тела.
+ */
 export async function measure(
   url: string,
   count: number,
   onResult?: (result: RequestResult, number: number) => void,
+  timeoutMs = TIMEOUT_MS,
 ): Promise<RequestResult[]> {
   const results: RequestResult[] = [];
   for (let number = 1; number <= count; number++) {
-    const result = await measureRequest(url);
+    const result = await measureRequest(url, timeoutMs);
     results.push(result);
     onResult?.(result, number);
   }
@@ -56,7 +64,6 @@ export function summarize(results: RequestResult[]): Summary {
   return {
     requests: results.length,
     totalBytes,
-    totalMs,
     averageMs: totalMs / results.length,
     bitsPerSecond: (totalBytes * 8) / (totalMs / 1000),
   };

@@ -36,6 +36,12 @@ async function main(): Promise<number> {
     const results = await measure(url.href, REQUEST_COUNT, (result, number) =>
       console.log(formatRequestLine(result, number, REQUEST_COUNT)),
     );
+    if (results.some((result) => result.decoded)) {
+      console.error(
+        "Внимание: сервер сжал ответ, хотя скрипт просил без сжатия. " +
+          "Объём посчитан после распаковки, поэтому скорость сети завышена.",
+      );
+    }
     console.log();
     console.log(formatSummary(summarize(results)));
     return 0;

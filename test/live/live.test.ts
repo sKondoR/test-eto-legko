@@ -11,8 +11,11 @@ it(`замеряет скорость на ${url}`, async () => {
   expect(run.stderr).toBe("");
   expect(run.code).toBe(0);
   expect(run.stdout.match(/^Запрос /gm)).toHaveLength(10);
-  if (url === DEFAULT_URL) expect(run.stdout).toContain("Скачано всего:       50.00 МБ");
 
-  const speed = Number(run.stdout.match(/Скорость скачивания: ([\d.]+) Мбит\/с/)?.[1]);
+  const total = Number(run.stdout.match(/Скачано всего:\s+([\d.]+) МБ/)?.[1]);
+  const speed = Number(run.stdout.match(/Скорость скачивания:\s+([\d.]+) Мбит\/с/)?.[1]);
+  // Размер известен только для адреса по умолчанию: так ловим сжатие или недочитанное тело у реального CDN.
+  if (url === DEFAULT_URL) expect(total).toBe(50);
+  expect(total).toBeGreaterThan(0);
   expect(speed).toBeGreaterThan(0);
 });
