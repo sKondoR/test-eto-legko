@@ -66,6 +66,8 @@ describe("cli", () => {
     expect(run.code).toBe(0);
     expect(run.stderr).toBe("");
     expect(run.stdout.match(/^Запрос /gm)).toHaveLength(10);
+    // stdout здесь не терминал: прогресс не рисуется, в выводе нет \r и полосы.
+    expect(run.stdout).not.toMatch(/[\r▓░]/);
     expect(run.stdout).toMatch(/Скачано всего:\s+2\.50 МБ/);
     expect(run.stdout).toMatch(/Скорость скачивания: [\d.]+ Мбит\/с/);
   });

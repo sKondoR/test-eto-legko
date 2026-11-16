@@ -1,6 +1,6 @@
 import { brotliCompressSync, gzipSync, zstdCompressSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { measure, summarize } from "../src/speedtest.ts";
+import { measure, summarize, type Progress } from "../src/speedtest.ts";
 import { startServer, type TestServer } from "./helpers/server.ts";
 
 describe("summarize", () => {
@@ -56,7 +56,13 @@ describe("measure", () => {
           res.end(Buffer.alloc(BODY_SIZE));
           return;
         case "/file":
+          // res.end с готовым буфером сам ставит Content-Length.
           res.end(Buffer.alloc(BODY_SIZE));
+          return;
+        case "/chunked":
+          // Два write без Content-Length: Node отдаёт тело частями (chunked), размер заранее неизвестен.
+          res.write(Buffer.alloc(BODY_SIZE / 2));
+          res.end(Buffer.alloc(BODY_SIZE / 2));
           return;
         case "/redirect":
           res.writeHead(302, { Location: "/file" }).end();
@@ -173,6 +179,52 @@ describe("measure", () => {
   it("без Content-Encoding считает тело как есть", async () => {
     const [result] = await measure(`${server.url}/file`, 1);
     expect(result).toMatchObject({ bytes: BODY_SIZE, decoded: false });
+  });
+
+  describe("прогресс", () => {
+    async function collectProgress(path: string, count = 1) {
+      const calls: { progress: Progress; requestNumber: number }[] = [];
+      await measure(`${server.url}${path}`, count, {
+        onProgress: (progress, requestNumber) => calls.push({ progress, requestNumber }),
+      });
+      return calls;
+    }
+
+    it("сообщает растущие байты, а последний вызов равен размеру тела", async () => {
+      const progress = (await collectProgress("/file")).map((call) => call.progress);
+
+      expect(progress.length).toBeGreaterThan(0);
+      for (let i = 1; i < progress.length; i++) {
+        expect(progress[i]!.bytes).toBeGreaterThan(progress[i - 1]!.bytes);
+        expect(progress[i]!.elapsedMs).toBeGreaterThanOrEqual(progress[i - 1]!.elapsedMs);
+      }
+      expect(progress.at(-1)!.bytes).toBe(BODY_SIZE);
+      expect(progress.every((p) => p.elapsedMs > 0)).toBe(true);
+    });
+
+    it("берёт общий размер из Content-Length", async () => {
+      const progress = (await collectProgress("/file")).map((call) => call.progress);
+      expect(progress.every((p) => p.totalBytes === BODY_SIZE)).toBe(true);
+    });
+
+    it("не знает общий размер, если сервер отдаёт тело частями (chunked)", async () => {
+      const progress = (await collectProgress("/chunked")).map((call) => call.progress);
+      expect(progress.at(-1)!.bytes).toBe(BODY_SIZE);
+      expect(progress.every((p) => p.totalBytes === null)).toBe(true);
+    });
+
+    it("не знает общий размер у сжатого ответа: Content-Length там — размер до распаковки", async () => {
+      const progress = (await collectProgress("/encoded/gzip")).map((call) => call.progress);
+      expect(progress.at(-1)!.bytes).toBe(BODY_SIZE);
+      expect(progress.every((p) => p.totalBytes === null)).toBe(true);
+    });
+
+    it("передаёт номер запроса", async () => {
+      const requestNumbers = new Set(
+        (await collectProgress("/file", 2)).map((c) => c.requestNumber),
+      );
+      expect([...requestNumbers]).toEqual([1, 2]);
+    });
   });
 
   it("падает, если соединение оборвалось посреди тела", async () => {

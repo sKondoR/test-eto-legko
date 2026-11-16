@@ -10,9 +10,18 @@ export interface RequestResult {
   decoded: boolean;
 }
 
+export interface Progress {
+  bytes: number;
+  /** Размер тела из Content-Length; null, если сервер его не прислал или fetch распаковывает ответ. */
+  totalBytes: number | null;
+  elapsedMs: number;
+}
+
 export interface MeasureOptions {
   /** Вызывается после каждого запроса; номер запроса начинается с 1. */
   onResult?: (result: RequestResult, requestNumber: number) => void;
+  /** Вызывается на каждый прочитанный кусок тела. */
+  onProgress?: (progress: Progress, requestNumber: number) => void;
   /** Сколько ждать следующую порцию данных: заголовки или очередной кусок тела. */
   idleTimeoutMs?: number;
 }
@@ -25,7 +34,11 @@ export interface Summary {
 }
 
 /** Делает один запрос и читает тело до конца. Время — от вызова fetch до последнего байта. */
-async function measureRequest(url: string, idleTimeoutMs: number): Promise<RequestResult> {
+async function measureRequest(
+  url: string,
+  idleTimeoutMs: number,
+  onProgress?: (progress: Progress) => void,
+): Promise<RequestResult> {
   // Таймаут простоя, а не общий срок: долгая загрузка тяжёлого файла не обрывается, пока данные идут.
   const controller = new AbortController();
   let idleTimer: NodeJS.Timeout | undefined;
@@ -52,6 +65,9 @@ async function measureRequest(url: string, idleTimeoutMs: number): Promise<Reque
     }
 
     const decoded = isDecodedByFetch(response.headers.get("content-encoding"));
+    // У сжатого ответа Content-Length — размер до распаковки, а считаем мы байты после неё.
+    const contentLength = response.headers.get("content-length");
+    const totalBytes = decoded || contentLength === null ? null : Number(contentLength);
 
     let bytes = 0;
     if (response.body) {
@@ -59,6 +75,7 @@ async function measureRequest(url: string, idleTimeoutMs: number): Promise<Reque
       for await (const chunk of response.body) {
         restartIdleTimer();
         bytes += chunk.byteLength;
+        onProgress?.({ bytes, totalBytes, elapsedMs: performance.now() - start });
       }
     }
     return { durationMs: performance.now() - start, bytes, decoded };
@@ -83,11 +100,15 @@ function isDecodedByFetch(contentEncoding: string | null): boolean {
 export async function measure(
   url: string,
   count: number,
-  { onResult, idleTimeoutMs = IDLE_TIMEOUT_MS }: MeasureOptions = {},
+  { onResult, onProgress, idleTimeoutMs = IDLE_TIMEOUT_MS }: MeasureOptions = {},
 ): Promise<RequestResult[]> {
   const results: RequestResult[] = [];
   for (let requestNumber = 1; requestNumber <= count; requestNumber++) {
-    const result = await measureRequest(url, idleTimeoutMs);
+    const result = await measureRequest(
+      url,
+      idleTimeoutMs,
+      onProgress && ((progress) => onProgress(progress, requestNumber)),
+    );
     results.push(result);
     onResult?.(result, requestNumber);
   }

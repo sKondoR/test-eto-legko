@@ -1,7 +1,9 @@
-import { formatRequestLine, formatSummary } from "./format.ts";
+import { clearLine, cursorTo } from "node:readline";
+import { formatProgress, formatRequestLine, formatSummary } from "./format.ts";
 import { REQUEST_COUNT, measure, summarize } from "./speedtest.ts";
 
 const USAGE = "Использование: node src/cli.ts <url>";
+const PROGRESS_INTERVAL_MS = 100;
 
 function parseUrl(arg: string): URL | undefined {
   try {
@@ -31,11 +33,31 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  // Прогресс рисуем только в терминале: в файле или pipe строки с \r стали бы мусором.
+  const showProgress = process.stdout.isTTY;
+  let lastProgressAt = 0;
+  const clearProgress = () => {
+    clearLine(process.stdout, 0);
+    cursorTo(process.stdout, 0);
+  };
+
   console.log(`Скачиваю ${url.href} ${REQUEST_COUNT} раз подряд...`);
   try {
     const results = await measure(url.href, REQUEST_COUNT, {
-      onResult: (result, requestNumber) =>
-        console.log(formatRequestLine(result, requestNumber, REQUEST_COUNT)),
+      onProgress: showProgress
+        ? (progress, requestNumber) => {
+            // Редкая перерисовка почти не тратит время внутри замера.
+            const now = performance.now();
+            if (now - lastProgressAt < PROGRESS_INTERVAL_MS) return;
+            lastProgressAt = now;
+            clearProgress();
+            process.stdout.write(formatProgress(progress, requestNumber, REQUEST_COUNT));
+          }
+        : undefined,
+      onResult: (result, requestNumber) => {
+        if (showProgress) clearProgress();
+        console.log(formatRequestLine(result, requestNumber, REQUEST_COUNT));
+      },
     });
     if (results.some((result) => result.decoded)) {
       console.error(
@@ -47,6 +69,7 @@ async function main(): Promise<number> {
     console.log(formatSummary(summarize(results)));
     return 0;
   } catch (error) {
+    if (showProgress) clearProgress();
     console.error(`Ошибка: ${describeError(error)}`);
     return 1;
   }
