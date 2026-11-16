@@ -1,19 +1,19 @@
 import type { RequestResult, Summary } from "./speedtest.ts";
 
 // Десятичные единицы, как у провайдеров и Speedtest: 1 МБ = 10⁶ байт, 1 Мбит = 10⁶ бит.
-const MEGA = 1_000_000;
+const DECIMAL_MEGA = 1_000_000;
 
 function formatMs(ms: number): string {
   return `${ms.toFixed(1)} мс`;
 }
 
 function formatMegabytes(bytes: number): string {
-  return `${(bytes / MEGA).toFixed(2)} МБ`;
+  return `${(bytes / DECIMAL_MEGA).toFixed(2)} МБ`;
 }
 
 function formatSpeed(bitsPerSecond: number): string {
-  const mbits = bitsPerSecond / MEGA;
-  const mbytes = bitsPerSecond / 8 / MEGA;
+  const mbits = bitsPerSecond / DECIMAL_MEGA;
+  const mbytes = bitsPerSecond / 8 / DECIMAL_MEGA;
   return `${mbits.toFixed(2)} Мбит/с (${mbytes.toFixed(2)} МБ/с)`;
 }
 
